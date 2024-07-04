@@ -113,36 +113,79 @@ A6[9, 10] = 0.5
 A = [A0, A1, A2, A3, A4, A5, A6]
 c = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-# 打印 A0 到 A6 矩阵
-'''
-for i, Ai in enumerate(A):
-    print(f"A{i} matrix:\n", Ai)
-'''
 # 定义变量
 X = cp.Variable((12, 12), symmetric=True)
 
 # 目标函数
-objective = cp.Minimize(cp.trace(Q12 @ X))
+objective = cp.Maximize(cp.trace(Q12 @ X))
 
 # 约束条件
 constraints = [cp.trace(A[i] @ X) == c[i] for i in range(7)]
 constraints += [X >> 0]  # X 是正半定的
 
-# 检查约束条件类型
-for constraint in constraints:
-    print("Constraint:", constraint)
-
 # 定义并求解问题
 problem = cp.Problem(objective, constraints)
-problem.solve(solver=cp.MOSEK, verbose=True)
+problem.solve(solver=cp.MOSEK, verbose=False)
 
 # 输出结果
 print("Optimal value:", problem.value)
 print("Optimal matrix X:")
-print(X.value)
+X_opt = X.value
+print(X_opt)
+
+# 检查最优解是否满足约束条件
+def check_constraints(X, A_matrices, b):
+    for i, A in enumerate(A_matrices):
+        trace_value = np.trace(A @ X)
+        if not np.isclose(trace_value, b[i], atol=1e-5):
+            print(f"Constraint {i} not satisfied: trace(A{i} @ X) = {trace_value}, expected {b[i]}")
+        else:
+            print(f"Constraint {i} satisfied: trace(A{i} @ X) = {trace_value}")
+
+# 检查 X 是否半正定
+def check_positive_semidefinite(X):
+    eigenvalues = np.linalg.eigvals(X)
+    if np.all(eigenvalues >= -1e-5):
+        print("X is positive semidefinite.")
+    else:
+        print("X is not positive semidefinite.")
+
+# 检查 X 的秩是否为 1
+def check_rank_one(X):
+    u, s, vh = np.linalg.svd(X)
+    rank = np.sum(s > 1e-5)
+    if rank == 1:
+        print("X has rank 1.")
+    else:
+        print(f"X does not have rank 1. Rank is {rank}.")
+
+# 投影到秩一空间
+def project_to_rank_one(X):
+    u, s, vh = np.linalg.svd(X)
+    s[1:] = 0  # 将除第一个奇异值外的所有奇异值设为0
+    X_rank_one = u @ np.diag(s) @ vh
+    return X_rank_one
+
+# 检查最优解
+check_constraints(X_opt, A, c)
+check_positive_semidefinite(X_opt)
+check_rank_one(X_opt)
+
+# 如果 X 的秩不为 1，进行投影
+if np.linalg.matrix_rank(X_opt) != 1:
+    X_projected = project_to_rank_one(X_opt)
+    print("Projected matrix X to rank 1:")
+    print(X_projected)
+
+    # 检查投影后的矩阵
+    check_constraints(X_projected, A, c)
+    check_positive_semidefinite(X_projected)
+    check_rank_one(X_projected)
+else:
+    print("X already has rank 1.")
 
 # 提取x向量
-eigenvalues, eigenvectors = np.linalg.eigh(X.value)
+eigenvalues, eigenvectors = np.linalg.eigh(X_opt)
 x = eigenvectors[:, -1]
 
 print("Extracted vector x:")
@@ -157,7 +200,7 @@ print(E)
 print("Translation vector t:")
 print(t)
 
-# 计算 \sum f'_i^T E f_i
+# 计算 ∑ f'_i^T E f_i 并归一化
 sum_residuals = 0
 for (x1, y1, x2, y2) in points_matches:
     f1_vec = np.array([x1, y1, 1])
@@ -165,4 +208,7 @@ for (x1, y1, x2, y2) in points_matches:
     residual = np.dot(f2_vec, np.dot(E, f1_vec))
     sum_residuals += residual
 
-print("Sum of residuals ∑ f'_i^T E f_i:", sum_residuals)
+# 归一化残差和
+average_residuals = sum_residuals / len(points_matches)
+
+print("Average of residuals ∑ f'_i^T E f_i / N:", average_residuals)

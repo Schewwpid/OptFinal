@@ -1,7 +1,6 @@
 import numpy as np
 import cvxpy as cp
 
-
 # 读取点对应文件
 def read_points(file_path):
     points = []
@@ -9,31 +8,25 @@ def read_points(file_path):
         lines = file.readlines()[1:]  # 跳过第一行标题
         for line in lines:
             parts = line.strip().split()
-            points.append((float(parts[0].strip(',')), float(parts[1].strip(',')), float(parts[2].strip(',')),
-                           float(parts[3].strip(','))))
+            points.append((float(parts[0].strip(',')), float(parts[1].strip(',')), float(parts[2].strip(',')), float(parts[3].strip(','))))
     return points
 
-
 # 示例文件路径
-file_path = 'pointsMatches1&2.txt'
+file_path = 'pointsMatches.txt'
 
 # 读取点对应
 points_matches = read_points(file_path)
-
 
 # 缩放数据
 def normalize_points(points):
     max_val = max(max(p) for p in points)
     return [(x1 / max_val, y1 / max_val, x2 / max_val, y2 / max_val) for (x1, y1, x2, y2) in points]
 
-
 points_matches = normalize_points(points_matches)
-
 
 # 计算 Kronecker 积
 def kronecker_product(v1, v2):
     return np.kron(v1, v2)
-
 
 # 计算 Q9 矩阵
 def compute_Q9(points_matches):
@@ -48,7 +41,6 @@ def compute_Q9(points_matches):
 
     Q9 /= N
     return Q9
-
 
 # 计算 Q9
 Q9 = compute_Q9(points_matches)
@@ -125,7 +117,7 @@ c = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 X = cp.Variable((12, 12), symmetric=True)
 
 # 目标函数
-objective = cp.Maximize(cp.trace(Q12 @ X))
+objective = cp.Minimize(cp.trace(Q12 @ X))
 
 # 约束条件
 constraints = [cp.trace(A[i] @ X) == c[i] for i in range(7)]
@@ -133,89 +125,15 @@ constraints += [X >> 0]  # X 是正半定的
 
 # 定义并求解问题
 problem = cp.Problem(objective, constraints)
-problem.solve(solver=cp.MOSEK, verbose=False)
+problem.solve(solver=cp.MOSEK, verbose=True)
 
 # 输出结果
 print("Optimal value:", problem.value)
 print("Optimal matrix X:")
-X_opt = X.value
-print(X_opt)
-
-
-# 投影到秩一空间
-def project_to_rank_one(X):
-    u, s, vh = np.linalg.svd(X)
-    s[1:] = 0  # 将除第一个奇异值外的所有奇异值设为0
-    X_rank_one = u @ np.diag(s) @ vh
-    return X_rank_one
-
-
-# 检查最优解是否满足约束条件
-def check_constraints(X, A_matrices, b):
-    for i, A in enumerate(A_matrices):
-        trace_value = np.trace(A @ X)
-        if not np.isclose(trace_value, b[i], atol=1e-5):
-            print(f"Constraint {i} not satisfied: trace(A{i} @ X) = {trace_value}, expected {b[i]}")
-        else:
-            print(f"Constraint {i} satisfied: trace(A{i} @ X) = {trace_value}")
-
-
-# 检查 X 是否半正定
-def check_positive_semidefinite(X):
-    eigenvalues = np.linalg.eigvals(X)
-    if np.all(eigenvalues >= -1e-5):
-        print("X is positive semidefinite.")
-    else:
-        print("X is not positive semidefinite.")
-
-
-# 检查 X 的秩是否为 1
-def check_rank_one(X):
-    u, s, vh = np.linalg.svd(X)
-    rank = np.sum(s > 1e-5)
-    if rank == 1:
-        print("X has rank 1.")
-    else:
-        print(f"X does not have rank 1. Rank is {rank}.")
-
-
-# 初始解检查
-check_constraints(X_opt, A, c)
-check_positive_semidefinite(X_opt)
-check_rank_one(X_opt)
-
-# 交替投影算法
-tol = 1e-20
-max_iter = 1000
-prev_X = X_opt
-for iteration in range(max_iter):
-    # 投影到秩一空间
-    X_rank_one = project_to_rank_one(prev_X)
-
-    # 投影到可行空间
-    X = cp.Variable((12, 12), symmetric=True)
-    constraints = [cp.trace(A[i] @ X) == c[i] for i in range(7)]
-    constraints += [X >> 0]
-    objective = cp.Minimize(cp.norm(X - X_rank_one, 'fro'))
-    problem = cp.Problem(objective, constraints)
-    problem.solve(solver=cp.MOSEK, verbose=False)
-
-    curr_X = X.value
-
-    # 检查收敛
-    if np.linalg.norm(curr_X - prev_X, 'fro') < tol:
-        print(f"Converged after {iteration + 1} iterations.")
-        break
-
-    prev_X = curr_X
-
-# 最终解检查
-check_constraints(curr_X, A, c)
-check_positive_semidefinite(curr_X)
-check_rank_one(curr_X)
+print(X.value)
 
 # 提取x向量
-eigenvalues, eigenvectors = np.linalg.eigh(curr_X)
+eigenvalues, eigenvectors = np.linalg.eigh(X.value)
 x = eigenvectors[:, -1]
 
 print("Extracted vector x:")
@@ -230,7 +148,7 @@ print(E)
 print("Translation vector t:")
 print(t)
 
-# 计算 ∑ f'_i^T E f_i 并归一化
+# 计算 \sum f'_i^T E f_i
 sum_residuals = 0
 for (x1, y1, x2, y2) in points_matches:
     f1_vec = np.array([x1, y1, 1])
@@ -238,7 +156,37 @@ for (x1, y1, x2, y2) in points_matches:
     residual = np.dot(f2_vec, np.dot(E, f1_vec))
     sum_residuals += residual
 
-# 归一化残差和
-average_residuals = sum_residuals / len(points_matches)
+print("Sum of residuals ∑ f'_i^T E f_i:", sum_residuals)
 
-print("Average of residuals ∑ f'_i^T E f_i / N:", average_residuals)
+# 提取相对旋转矩阵 R 和相对位移向量 t
+U, S, Vt = np.linalg.svd(E)
+W = np.array([[0, -1, 0],
+              [1, 0, 0],
+              [0, 0, 1]])
+
+# 可能的两组解
+R1 = U @ W @ Vt
+R2 = U @ W.T @ Vt
+t1 = U[:, 2]
+t2 = -U[:, 2]
+
+print("Possible relative rotations R1 and R2:")
+print("R1:\n", R1)
+print("R2:\n", R2)
+
+print("Possible relative translations t1 and t2:")
+print("t1:\n", t1)
+print("t2:\n", t2)
+
+# 选择合适的 R 和 t 组合
+if t[0] * t1[0] + t[1] * t1[1] + t[2] * t1[2] > 0:
+    R_final = R1
+    t_final = t1
+else:
+    R_final = R2
+    t_final = t2
+
+print("Final relative rotation R:")
+print(R_final)
+print("Final relative translation t:")
+print(t_final)
